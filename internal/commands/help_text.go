@@ -1,6 +1,6 @@
 package commands
 
-import "github.com/hero/pr-agent/internal/guide"
+import "github.com/m-mohammadi1/pr-agent/internal/guide"
 
 // Agent-oriented help text for pr-agent commands.
 // Written for AI agents that invoke this CLI as a shell tool.

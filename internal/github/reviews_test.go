@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hero/pr-agent/internal/models"
+	"github.com/m-mohammadi1/pr-agent/internal/models"
 )
 
 func TestAssertResolvable(t *testing.T) {

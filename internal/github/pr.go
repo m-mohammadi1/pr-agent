@@ -3,7 +3,7 @@ package github
 import (
 	"context"
 
-	"github.com/hero/pr-agent/internal/models"
+	"github.com/m-mohammadi1/pr-agent/internal/models"
 )
 
 // FetchPRInfo returns title, description, and basic metadata for a pull request.

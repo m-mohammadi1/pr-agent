@@ -1,6 +1,6 @@
 package main
 
-import "github.com/hero/pr-agent/internal/commands"
+import "github.com/m-mohammadi1/pr-agent/internal/commands"
 
 func main() {
 	commands.Execute()

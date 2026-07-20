@@ -6,7 +6,7 @@ import (
 	"time"
 
 	gh "github.com/google/go-github/v69/github"
-	"github.com/hero/pr-agent/internal/models"
+	"github.com/m-mohammadi1/pr-agent/internal/models"
 )
 
 // FetchIssueComments returns top-level PR conversation comments.

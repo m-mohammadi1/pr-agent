@@ -1,4 +1,4 @@
-module github.com/hero/pr-agent
+module github.com/m-mohammadi1/pr-agent
 
 go 1.25.0
 

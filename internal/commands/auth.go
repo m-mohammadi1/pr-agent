@@ -8,8 +8,8 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/hero/pr-agent/internal/config"
-	"github.com/hero/pr-agent/internal/github"
+	"github.com/m-mohammadi1/pr-agent/internal/config"
+	"github.com/m-mohammadi1/pr-agent/internal/github"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )

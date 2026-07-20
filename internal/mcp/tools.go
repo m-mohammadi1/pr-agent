@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"github.com/hero/pr-agent/internal/github"
-	"github.com/hero/pr-agent/internal/guide"
-	"github.com/hero/pr-agent/internal/models"
+	"github.com/m-mohammadi1/pr-agent/internal/github"
+	"github.com/m-mohammadi1/pr-agent/internal/guide"
+	"github.com/m-mohammadi1/pr-agent/internal/models"
 )
 
 // toolDef describes a single MCP tool and its handler.

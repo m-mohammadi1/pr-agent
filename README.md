@@ -35,6 +35,12 @@ Agents via MCP use the same flow: `get_pr_info` → `list_reviews` → `get_revi
 Install to your `GOPATH/bin` (so `pr-agent` is on your PATH):
 
 ```bash
+go install github.com/m-mohammadi1/pr-agent/cmd/pr-agent@latest
+```
+
+From a local checkout:
+
+```bash
 go install ./cmd/pr-agent
 ```
 

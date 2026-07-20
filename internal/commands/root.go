@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/hero/pr-agent/internal/github"
-	"github.com/hero/pr-agent/internal/models"
-	"github.com/hero/pr-agent/internal/output"
+	"github.com/m-mohammadi1/pr-agent/internal/github"
+	"github.com/m-mohammadi1/pr-agent/internal/models"
+	"github.com/m-mohammadi1/pr-agent/internal/output"
 	"github.com/spf13/cobra"
 )
 

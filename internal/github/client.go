@@ -8,8 +8,8 @@ import (
 	"strings"
 
 	gh "github.com/google/go-github/v69/github"
-	"github.com/hero/pr-agent/internal/config"
-	"github.com/hero/pr-agent/internal/models"
+	"github.com/m-mohammadi1/pr-agent/internal/config"
+	"github.com/m-mohammadi1/pr-agent/internal/models"
 )
 
 // Client wraps REST and GraphQL access to GitHub.

@@ -1,7 +1,7 @@
 package commands
 
 import (
-	"github.com/hero/pr-agent/internal/mcp"
+	"github.com/m-mohammadi1/pr-agent/internal/mcp"
 	"github.com/spf13/cobra"
 )
 
