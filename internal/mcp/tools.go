@@ -22,31 +22,32 @@ func buildTools() []toolDef {
 	return []toolDef{
 		{
 			name: "get_agent_guide",
-			description: "Return the full pr-agent workflow, comment kinds, field reference, and tool/command map. " +
-				"Call this first if you are unsure how to use pr-agent MCP tools.",
+			description: "Return the full pr-agent usage guide for humans and agents: reviews vs review, " +
+				"workflow, id prefixes, and CLI/MCP command map. Call this first if unsure.",
 			inputSchema: object(nil, nil),
 			handler:     getAgentGuide,
 		},
 		{
-			name: "get_pr_context",
-			description: "Primary entry point. Return an actionable fix queue for a pull request: " +
-				"unresolved review threads, PR conversation comments, and review bodies, each with " +
-				"file/line, diff hunk, and full comment history. Use this to understand what to fix.",
-			inputSchema: fetchSchema(),
-			handler:     getPRContext,
-		},
-		{
-			name: "list_pr_threads",
-			description: "List raw review threads and conversation comments for a pull request, " +
-				"with nested comments per thread. Prefer get_pr_context for a flat fix queue.",
-			inputSchema: fetchSchema(),
-			handler:     listPRThreads,
-		},
-		{
-			name:        "pr_status",
-			description: "Return aggregate comment counts for a pull request (total, unresolved, resolved, outdated, per-kind). Use to verify unresolved reached zero.",
+			name: "list_reviews",
+			description: "INDEX of the PR: list submitted reviews with unresolved/resolved item counts, " +
+				"plus orphans (e.g. Dependency Security Scan). Use this to choose which id to open next. " +
+				"Then call get_review with that id for full details. Not a full comment dump.",
 			inputSchema: prTargetSchema(),
-			handler:     prStatus,
+			handler:     listReviews,
+		},
+		{
+			name: "get_review",
+			description: "DETAIL for ONE review or orphan id from list_reviews. Returns summary body plus all " +
+				"nested items with comments, diff hunks, file/line, reply_comment_id, and thread_id. " +
+				"Ids: PRR_ (review), IC_ (orphan issue comment), PRRT_ (single inline thread).",
+			inputSchema: reviewIDSchema(),
+			handler:     getReview,
+		},
+		{
+			name:        "get_pr_info",
+			description: "Return a pull request's title, description (body), state, author, branches, and URL. Read-only metadata.",
+			inputSchema: prTargetSchema(),
+			handler:     getPRInfo,
 		},
 		{
 			name: "reply_to_comment",
@@ -56,14 +57,16 @@ func buildTools() []toolDef {
 			handler:     replyToComment,
 		},
 		{
-			name:        "resolve_thread",
-			description: "Mark an inline review thread as resolved (thread_id starting with PRRT_). Idempotent.",
+			name: "resolve_thread",
+			description: "Mark an inline review thread as resolved (thread_id starting with PRRT_). " +
+				"Server rejects review summaries (PRR_) and issue comments (IC_). Idempotent.",
 			inputSchema: resolveSchema(),
 			handler:     resolveThread,
 		},
 		{
-			name:        "unresolve_thread",
-			description: "Re-open a resolved inline review thread (thread_id starting with PRRT_). Idempotent.",
+			name: "unresolve_thread",
+			description: "Re-open a resolved inline review thread (thread_id starting with PRRT_). " +
+				"Server rejects PRR_ and IC_ ids. Idempotent.",
 			inputSchema: resolveSchema(),
 			handler:     unresolveThread,
 		},
@@ -85,23 +88,11 @@ func prTargetSchema() map[string]any {
 	}, []string{"repo", "pr"})
 }
 
-func fetchSchema() map[string]any {
-	return object(map[string]any{
-		"repo":                prop("string", "repository in owner/name format"),
-		"pr":                  prop("integer", "pull request number"),
-		"unresolved":          prop("boolean", "only include unresolved inline threads (conversation comments always included)"),
-		"inline_only":         prop("boolean", "only fetch inline review threads"),
-		"no_conversation":     prop("boolean", "exclude PR conversation and review-body comments"),
-		"include_issue":       prop("boolean", "include top-level PR conversation comments (default true)"),
-		"include_review_body": prop("boolean", "include submitted review summary bodies (default true)"),
-	}, []string{"repo", "pr"})
-}
-
 func replySchema() map[string]any {
 	return object(map[string]any{
 		"repo":       prop("string", "repository in owner/name format"),
 		"pr":         prop("integer", "pull request number"),
-		"comment_id": prop("string", "numeric database id of the comment to reply to (from get_pr_context)"),
+		"comment_id": prop("string", "numeric database id (items[].reply_comment_id or reply.comment_id from get_review)"),
 		"body":       prop("string", "reply text; mention the commit SHA of the fix"),
 		"kind":       prop("string", "comment kind: inline_review (default), issue_comment, or review_body"),
 	}, []string{"repo", "pr", "comment_id", "body"})
@@ -109,8 +100,16 @@ func replySchema() map[string]any {
 
 func resolveSchema() map[string]any {
 	return object(map[string]any{
-		"thread_id": prop("string", "GraphQL thread id from get_pr_context, prefix PRRT_"),
+		"thread_id": prop("string", "GraphQL thread id from get_review items, prefix PRRT_"),
 	}, []string{"thread_id"})
+}
+
+func reviewIDSchema() map[string]any {
+	return object(map[string]any{
+		"repo": prop("string", "repository in owner/name format"),
+		"pr":   prop("integer", "pull request number"),
+		"id":   prop("string", "review or orphan id from list_reviews: PRR_..., IC_..., or PRRT_..."),
+	}, []string{"repo", "pr", "id"})
 }
 
 func object(props map[string]any, required []string) map[string]any {
@@ -133,30 +132,6 @@ func prop(typ, desc string) map[string]any {
 
 // --- input types ---
 
-type fetchArgs struct {
-	Repo              string `json:"repo"`
-	PR                int    `json:"pr"`
-	Unresolved        *bool  `json:"unresolved"`
-	InlineOnly        bool   `json:"inline_only"`
-	NoConversation    bool   `json:"no_conversation"`
-	IncludeIssue      *bool  `json:"include_issue"`
-	IncludeReviewBody *bool  `json:"include_review_body"`
-}
-
-func (f fetchArgs) options(defaultUnresolved bool) github.FetchOptions {
-	opts := github.FetchOptions{
-		IncludeInline:     true,
-		IncludeIssue:      boolOr(f.IncludeIssue, true),
-		IncludeReviewBody: boolOr(f.IncludeReviewBody, true),
-		UnresolvedOnly:    boolOr(f.Unresolved, defaultUnresolved),
-	}
-	if f.InlineOnly || f.NoConversation {
-		opts.IncludeIssue = false
-		opts.IncludeReviewBody = false
-	}
-	return opts
-}
-
 type prTargetArgs struct {
 	Repo string `json:"repo"`
 	PR   int    `json:"pr"`
@@ -174,50 +149,15 @@ type resolveArgs struct {
 	ThreadID string `json:"thread_id"`
 }
 
+type reviewIDArgs struct {
+	Repo string `json:"repo"`
+	PR   int    `json:"pr"`
+	ID   string `json:"id"`
+}
+
 // --- handlers ---
 
-func getPRContext(ctx context.Context, raw json.RawMessage) map[string]any {
-	var in fetchArgs
-	if err := decode(raw, &in); err != nil {
-		return toolError(err)
-	}
-	client, owner, name, err := clientAndRepo(ctx, in.Repo)
-	if err != nil {
-		return toolError(err)
-	}
-	threads, err := client.FetchThreads(ctx, owner, name, in.PR, in.options(true))
-	if err != nil {
-		return toolError(fmt.Errorf("fetch threads: %w", err))
-	}
-	return jsonResult(models.ContextResult{
-		Repo:    in.Repo,
-		PR:      in.PR,
-		Items:   github.BuildContext(threads),
-		Summary: github.Summarize(threads),
-	})
-}
-
-func listPRThreads(ctx context.Context, raw json.RawMessage) map[string]any {
-	var in fetchArgs
-	if err := decode(raw, &in); err != nil {
-		return toolError(err)
-	}
-	client, owner, name, err := clientAndRepo(ctx, in.Repo)
-	if err != nil {
-		return toolError(err)
-	}
-	threads, err := client.FetchThreads(ctx, owner, name, in.PR, in.options(false))
-	if err != nil {
-		return toolError(fmt.Errorf("list threads: %w", err))
-	}
-	return jsonResult(models.ListResult{
-		Repo:    in.Repo,
-		PR:      in.PR,
-		Threads: threads,
-	})
-}
-
-func prStatus(ctx context.Context, raw json.RawMessage) map[string]any {
+func listReviews(ctx context.Context, raw json.RawMessage) map[string]any {
 	var in prTargetArgs
 	if err := decode(raw, &in); err != nil {
 		return toolError(err)
@@ -226,15 +166,49 @@ func prStatus(ctx context.Context, raw json.RawMessage) map[string]any {
 	if err != nil {
 		return toolError(err)
 	}
-	threads, err := client.FetchThreads(ctx, owner, name, in.PR, github.DefaultFetchOptions())
+	result, err := client.ListReviews(ctx, owner, name, in.PR)
 	if err != nil {
-		return toolError(fmt.Errorf("fetch threads: %w", err))
+		return toolError(fmt.Errorf("list reviews: %w", err))
 	}
-	return jsonResult(models.StatusResult{
-		Repo:    in.Repo,
-		PR:      in.PR,
-		Summary: github.Summarize(threads),
-	})
+	result.Repo = in.Repo
+	return jsonResult(result)
+}
+
+func getReview(ctx context.Context, raw json.RawMessage) map[string]any {
+	var in reviewIDArgs
+	if err := decode(raw, &in); err != nil {
+		return toolError(err)
+	}
+	if in.ID == "" {
+		return toolError(fmt.Errorf("id is required"))
+	}
+	client, owner, name, err := clientAndRepo(ctx, in.Repo)
+	if err != nil {
+		return toolError(err)
+	}
+	result, err := client.GetReview(ctx, owner, name, in.PR, in.ID)
+	if err != nil {
+		return toolError(fmt.Errorf("get review: %w", err))
+	}
+	result.Repo = in.Repo
+	return jsonResult(result)
+}
+
+func getPRInfo(ctx context.Context, raw json.RawMessage) map[string]any {
+	var in prTargetArgs
+	if err := decode(raw, &in); err != nil {
+		return toolError(err)
+	}
+	client, owner, name, err := clientAndRepo(ctx, in.Repo)
+	if err != nil {
+		return toolError(err)
+	}
+	result, err := client.FetchPRInfo(ctx, owner, name, in.PR)
+	if err != nil {
+		return toolError(fmt.Errorf("get pr info: %w", err))
+	}
+	result.Repo = in.Repo
+	return jsonResult(result)
 }
 
 func replyToComment(ctx context.Context, raw json.RawMessage) map[string]any {
@@ -272,6 +246,9 @@ func resolveThread(ctx context.Context, raw json.RawMessage) map[string]any {
 	if in.ThreadID == "" {
 		return toolError(fmt.Errorf("thread_id is required"))
 	}
+	if err := github.AssertResolvable(in.ThreadID); err != nil {
+		return toolError(err)
+	}
 	client, err := github.NewClient(ctx)
 	if err != nil {
 		return toolError(err)
@@ -289,6 +266,9 @@ func unresolveThread(ctx context.Context, raw json.RawMessage) map[string]any {
 	}
 	if in.ThreadID == "" {
 		return toolError(fmt.Errorf("thread_id is required"))
+	}
+	if err := github.AssertResolvable(in.ThreadID); err != nil {
+		return toolError(err)
 	}
 	client, err := github.NewClient(ctx)
 	if err != nil {
@@ -355,13 +335,6 @@ func parseKind(s string) (models.CommentKind, error) {
 	default:
 		return "", fmt.Errorf("invalid kind %q: use inline_review, issue_comment, or review_body", s)
 	}
-}
-
-func boolOr(p *bool, def bool) bool {
-	if p == nil {
-		return def
-	}
-	return *p
 }
 
 // jsonResult builds a successful MCP tool result with JSON text content.

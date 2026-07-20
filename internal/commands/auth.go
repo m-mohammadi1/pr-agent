@@ -16,9 +16,9 @@ import (
 
 func newAuthCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:     "auth",
-		Short:   "Authenticate pr-agent (one-time setup)",
-		Long:    authLong,
+		Use:   "auth",
+		Short: "Authenticate pr-agent (one-time setup)",
+		Long:  authLong,
 		Example: `  pr-agent auth login
   pr-agent auth login --from-gh
   pr-agent auth status
@@ -35,8 +35,8 @@ func newAuthCommand() *cobra.Command {
 }
 
 type loginOptions struct {
-	token   string
-	fromGH  bool
+	token     string
+	fromGH    bool
 	assumeYes bool
 }
 
@@ -44,9 +44,9 @@ func newAuthLoginCommand() *cobra.Command {
 	var opts loginOptions
 
 	cmd := &cobra.Command{
-		Use:     "login",
-		Short:   "Authenticate and store your GitHub token",
-		Long:    authLoginLong,
+		Use:   "login",
+		Short: "Authenticate and store your GitHub token",
+		Long:  authLoginLong,
 		Example: `  pr-agent auth login
   pr-agent auth login --from-gh
   pr-agent auth login --token ghp_xxx`,

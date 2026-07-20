@@ -30,69 +30,36 @@ func (f *repoFlags) bind(cmd *cobra.Command) {
 	_ = cmd.MarkFlagRequired("pr")
 }
 
-type fetchFlags struct {
-	inlineOnly         bool
-	noConversation     bool
-	includeIssue       bool
-	includeReviewBody  bool
-	unresolved         bool
-}
-
-func (f *fetchFlags) bind(cmd *cobra.Command, defaultUnresolved bool) {
-	cmd.Flags().BoolVar(&f.unresolved, "unresolved", defaultUnresolved, "only include unresolved inline threads (conversation comments always included)")
-	cmd.Flags().BoolVar(&f.inlineOnly, "inline-only", false, "only fetch inline review threads")
-	cmd.Flags().BoolVar(&f.noConversation, "no-conversation", false, "exclude PR conversation and review-body comments")
-	cmd.Flags().BoolVar(&f.includeIssue, "include-issue", true, "include top-level PR conversation comments")
-	cmd.Flags().BoolVar(&f.includeReviewBody, "include-review-body", true, "include submitted review summary bodies")
-}
-
-func (f *fetchFlags) options() github.FetchOptions {
-	opts := github.FetchOptions{
-		IncludeInline:     true,
-		IncludeIssue:      f.includeIssue,
-		IncludeReviewBody: f.includeReviewBody,
-		UnresolvedOnly:    f.unresolved,
-	}
-	if f.inlineOnly {
-		opts.IncludeIssue = false
-		opts.IncludeReviewBody = false
-	}
-	if f.noConversation {
-		opts.IncludeIssue = false
-		opts.IncludeReviewBody = false
-	}
-	return opts
-}
-
 // NewRootCommand builds the CLI root.
 func NewRootCommand() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "pr-agent",
-		Short: "GitHub PR review bridge for AI agents",
+		Short: "GitHub PR review bridge for humans and AI agents",
 		Long:  rootLong,
 		Example: `  # One-time auth
   pr-agent auth login
 
-  # Get fix queue (primary agent entry point)
-  pr-agent context --repo owner/repo --pr 42
+  # How to use (index → detail → act)
+  pr-agent info    --repo owner/repo --pr 42
+  pr-agent reviews --repo owner/repo --pr 42              # INDEX: which reviews need work?
+  pr-agent review  --repo owner/repo --pr 42 --id PRR_123 # DETAIL: load that review fully
 
   # After fixing locally
-  pr-agent reply --repo owner/repo --pr 42 --comment-id 123456 --body "Fixed in abc123"
+  pr-agent reply   --repo owner/repo --pr 42 --comment-id 123456 --body "Fixed in abc123"
   pr-agent resolve --thread-id PRRT_kwDO...
-  pr-agent unresolve --thread-id PRRT_kwDO...
 
   # Verify
-  pr-agent status --repo owner/repo --pr 42`,
+  pr-agent reviews --repo owner/repo --pr 42`,
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
 
-	root.AddCommand(newListCommand())
-	root.AddCommand(newContextCommand())
+	root.AddCommand(newInfoCommand())
+	root.AddCommand(newReviewsCommand())
+	root.AddCommand(newReviewCommand())
 	root.AddCommand(newReplyCommand())
 	root.AddCommand(newResolveCommand())
 	root.AddCommand(newUnresolveCommand())
-	root.AddCommand(newStatusCommand())
 	root.AddCommand(newAuthCommand())
 	root.AddCommand(newMCPCommand())
 
@@ -157,17 +124,14 @@ func wrapAPI(err error) error {
 	return apiError{err: err}
 }
 
-func newListCommand() *cobra.Command {
+func newReviewsCommand() *cobra.Command {
 	var flags repoFlags
-	var fetch fetchFlags
 
 	cmd := &cobra.Command{
-		Use:     "list",
-		Short:   "List PR review threads and conversation comments",
-		Long:    listLong,
-		Example: `  pr-agent list --repo owner/repo --pr 42
-  pr-agent list --repo owner/repo --pr 42 --unresolved
-  pr-agent list --repo owner/repo --pr 42 --inline-only`,
+		Use:     "reviews",
+		Short:   "Index: list reviews + orphans (counts only; pick an id next)",
+		Long:    reviewsLong,
+		Example: `  pr-agent reviews --repo owner/repo --pr 42`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			client, err := newClient(ctx)
@@ -180,35 +144,68 @@ func newListCommand() *cobra.Command {
 				return err
 			}
 
-			threads, err := client.FetchThreads(ctx, owner, name, flags.PR, fetch.options())
+			result, err := client.ListReviews(ctx, owner, name, flags.PR)
 			if err != nil {
-				return wrapAPI(fmt.Errorf("list threads: %w", err))
+				return wrapAPI(fmt.Errorf("list reviews: %w", err))
 			}
-
-			return output.WriteJSON(models.ListResult{
-				Repo:    flags.Repo,
-				PR:      flags.PR,
-				Threads: threads,
-			})
+			result.Repo = flags.Repo
+			return output.WriteJSON(result)
 		},
 	}
 
 	flags.bind(cmd)
-	fetch.bind(cmd, false)
 	return cmd
 }
 
-func newContextCommand() *cobra.Command {
+func newReviewCommand() *cobra.Command {
 	var flags repoFlags
-	var fetch fetchFlags
+	var id string
 
 	cmd := &cobra.Command{
-		Use:     "context",
-		Short:   "Build agent fix-queue with comment and diff context",
-		Long:    contextLong,
-		Example: `  pr-agent context --repo owner/repo --pr 42
-  pr-agent context --repo owner/repo --pr 42 --unresolved=false
-  pr-agent context --repo owner/repo --pr 42 --no-conversation`,
+		Use:   "review",
+		Short: "Detail: load one review/orphan by --id (full items + comments)",
+		Long:  reviewLong,
+		Example: `  pr-agent review --repo owner/repo --pr 42 --id PRR_123
+  pr-agent review --repo owner/repo --pr 42 --id IC_999
+  pr-agent review --repo owner/repo --pr 42 --id PRRT_kwDO...`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			client, err := newClient(ctx)
+			if err != nil {
+				return err
+			}
+
+			owner, name, err := parseRepo(flags.Repo)
+			if err != nil {
+				return err
+			}
+			if id == "" {
+				return usageError{usage: true, err: fmt.Errorf("--id is required")}
+			}
+
+			result, err := client.GetReview(ctx, owner, name, flags.PR, id)
+			if err != nil {
+				return wrapAPI(fmt.Errorf("get review: %w", err))
+			}
+			result.Repo = flags.Repo
+			return output.WriteJSON(result)
+		},
+	}
+
+	flags.bind(cmd)
+	cmd.Flags().StringVar(&id, "id", "", "review or orphan id: PRR_..., IC_..., or PRRT_... (required)")
+	_ = cmd.MarkFlagRequired("id")
+	return cmd
+}
+
+func newInfoCommand() *cobra.Command {
+	var flags repoFlags
+
+	cmd := &cobra.Command{
+		Use:     "info",
+		Short:   "Get PR title, description, and basic metadata",
+		Long:    infoLong,
+		Example: `  pr-agent info --repo owner/repo --pr 42`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			client, err := newClient(ctx)
@@ -221,25 +218,16 @@ func newContextCommand() *cobra.Command {
 				return err
 			}
 
-			threads, err := client.FetchThreads(ctx, owner, name, flags.PR, fetch.options())
+			result, err := client.FetchPRInfo(ctx, owner, name, flags.PR)
 			if err != nil {
-				return wrapAPI(fmt.Errorf("fetch threads: %w", err))
+				return wrapAPI(fmt.Errorf("get pr info: %w", err))
 			}
-
-			items := github.BuildContext(threads)
-			summary := github.Summarize(threads)
-
-			return output.WriteJSON(models.ContextResult{
-				Repo:    flags.Repo,
-				PR:      flags.PR,
-				Items:   items,
-				Summary: summary,
-			})
+			result.Repo = flags.Repo
+			return output.WriteJSON(result)
 		},
 	}
 
 	flags.bind(cmd)
-	fetch.bind(cmd, true)
 	return cmd
 }
 
@@ -251,9 +239,9 @@ func newReplyCommand() *cobra.Command {
 	var kind string
 
 	cmd := &cobra.Command{
-		Use:     "reply",
-		Short:   "Reply to a review or conversation comment",
-		Long:    replyLong,
+		Use:   "reply",
+		Short: "Reply to a review or conversation comment",
+		Long:  replyLong,
 		Example: `  pr-agent reply --repo owner/repo --pr 42 --comment-id 123456 --body "Fixed in abc123"
   pr-agent reply --repo owner/repo --pr 42 --comment-id 789 --kind issue_comment --body "Addressed"`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -333,6 +321,9 @@ func newResolveCommand() *cobra.Command {
 			if threadID == "" {
 				return usageError{usage: true, err: fmt.Errorf("--thread-id is required")}
 			}
+			if err := github.AssertResolvable(threadID); err != nil {
+				return usageError{usage: true, err: err}
+			}
 
 			if err := client.GraphQL().ResolveThread(ctx, threadID); err != nil {
 				return wrapAPI(fmt.Errorf("resolve thread: %w", err))
@@ -368,6 +359,9 @@ func newUnresolveCommand() *cobra.Command {
 			if threadID == "" {
 				return usageError{usage: true, err: fmt.Errorf("--thread-id is required")}
 			}
+			if err := github.AssertResolvable(threadID); err != nil {
+				return usageError{usage: true, err: err}
+			}
 
 			if err := client.GraphQL().UnresolveThread(ctx, threadID); err != nil {
 				return wrapAPI(fmt.Errorf("unresolve thread: %w", err))
@@ -382,42 +376,5 @@ func newUnresolveCommand() *cobra.Command {
 
 	cmd.Flags().StringVar(&threadID, "thread-id", "", "GraphQL thread id (required)")
 	_ = cmd.MarkFlagRequired("thread-id")
-	return cmd
-}
-
-func newStatusCommand() *cobra.Command {
-	var flags repoFlags
-
-	cmd := &cobra.Command{
-		Use:     "status",
-		Short:   "Summarize review thread counts for a PR",
-		Long:    statusLong,
-		Example: `  pr-agent status --repo owner/repo --pr 42`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			ctx := cmd.Context()
-			client, err := newClient(ctx)
-			if err != nil {
-				return err
-			}
-
-			owner, name, err := parseRepo(flags.Repo)
-			if err != nil {
-				return err
-			}
-
-			threads, err := client.FetchThreads(ctx, owner, name, flags.PR, github.DefaultFetchOptions())
-			if err != nil {
-				return wrapAPI(fmt.Errorf("fetch threads: %w", err))
-			}
-
-			return output.WriteJSON(models.StatusResult{
-				Repo:    flags.Repo,
-				PR:      flags.PR,
-				Summary: github.Summarize(threads),
-			})
-		},
-	}
-
-	flags.bind(cmd)
 	return cmd
 }

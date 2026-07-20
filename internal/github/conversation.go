@@ -49,11 +49,11 @@ func (c *Client) FetchIssueComments(ctx context.Context, owner, repo string, pr 
 	return threads, nil
 }
 
-// FetchReviewBodies returns submitted review summary comments (non-inline review bodies).
-func (c *Client) FetchReviewBodies(ctx context.Context, owner, repo string, pr int) ([]models.Thread, error) {
+// FetchReviewMetas returns all submitted PR reviews (including empty bodies).
+func (c *Client) FetchReviewMetas(ctx context.Context, owner, repo string, pr int) ([]models.ReviewMeta, error) {
 	opts := &gh.ListOptions{PerPage: 100}
 
-	var threads []models.Thread
+	var out []models.ReviewMeta
 	for {
 		reviews, resp, err := c.rest.PullRequests.ListReviews(ctx, owner, repo, pr, opts)
 		if err != nil {
@@ -61,10 +61,6 @@ func (c *Client) FetchReviewBodies(ctx context.Context, owner, repo string, pr i
 		}
 
 		for _, rv := range reviews {
-			body := rv.GetBody()
-			if body == "" {
-				continue
-			}
 			author := ""
 			if rv.User != nil {
 				author = rv.User.GetLogin()
@@ -74,16 +70,12 @@ func (c *Client) FetchReviewBodies(ctx context.Context, owner, repo string, pr i
 				submittedAt = rv.SubmittedAt.Time
 			}
 
-			threads = append(threads, models.Thread{
-				ThreadID:   fmt.Sprintf("PRR_%d", rv.GetID()),
-				Kind:       models.KindReviewBody,
-				IsResolved: false,
-				Comments: []models.Comment{{
-					ID:        fmt.Sprintf("%d", rv.GetID()),
-					Body:      body,
-					Author:    author,
-					CreatedAt: submittedAt,
-				}},
+			out = append(out, models.ReviewMeta{
+				ReviewID:    ReviewIDFromDatabaseID(rv.GetID()),
+				Author:      author,
+				State:       rv.GetState(),
+				Body:        rv.GetBody(),
+				SubmittedAt: submittedAt,
 			})
 		}
 
@@ -93,7 +85,7 @@ func (c *Client) FetchReviewBodies(ctx context.Context, owner, repo string, pr i
 		opts.Page = resp.NextPage
 	}
 
-	return threads, nil
+	return out, nil
 }
 
 // CreateIssueComment posts a top-level comment on the PR conversation.

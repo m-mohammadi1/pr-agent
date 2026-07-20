@@ -1,6 +1,34 @@
 # pr-agent
 
-A portable Go CLI that bridges GitHub PR review comments and AI agents. Fetch unresolved review threads, get fix context with diff hunks, reply to comments, and resolve threads — all via structured JSON on stdout.
+CLI (+ MCP server) that bridges GitHub PR review comments and AI agents — and works the same way for humans in a terminal. Fetch review feedback as JSON, fix code locally, then reply and resolve threads.
+
+## How to use
+
+```text
+info      →  title + description
+reviews   →  INDEX: which reviews / orphans need work?
+review    →  DETAIL: load one id fully (items, comments, diffs)
+(fix)    →  edit + commit in your repo
+reply     →  comment on the thread
+resolve   →  close the inline item (PRRT_ only)
+reviews   →  confirm items_unresolved is 0
+```
+
+| Command | Role |
+|---------|------|
+| `reviews` | **Index** of the PR — counts and previews only |
+| `review --id …` | **Detail** for one review or orphan |
+
+```bash
+pr-agent auth login
+pr-agent info    --repo owner/repo --pr 42
+pr-agent reviews --repo owner/repo --pr 42
+pr-agent review  --repo owner/repo --pr 42 --id PRR_123
+pr-agent reply   --repo owner/repo --pr 42 --comment-id 456 --body "Fixed in abc123"
+pr-agent resolve --thread-id PRRT_...
+```
+
+Agents via MCP use the same flow: `get_pr_info` → `list_reviews` → `get_review` → `reply_to_comment` → `resolve_thread`. Run `pr-agent --help` or call `get_agent_guide` for the full guide.
 
 ## Install
 
@@ -87,35 +115,32 @@ pr-agent auth logout
 
 See [Auth](#auth) above for details.
 
-### `context` — main agent entry point
+### `reviews` — index (plural)
 
-Returns an actionable fix queue with file paths, lines, comment bodies, diff hunks, and full conversation history per thread.
-
-Includes:
-- **inline_review** — line-level review threads (paginated, full reply chain)
-- **issue_comment** — top-level PR conversation comments
-- **review_body** — submitted review summary bodies
+Lists reviews + orphans with unresolved/resolved **counts** and short previews. Use this to pick an id.
 
 ```bash
-pr-agent context --repo owner/repo --pr 42
-pr-agent context --repo owner/repo --pr 42 --unresolved=false
-pr-agent context --repo owner/repo --pr 42 --inline-only
-pr-agent context --repo owner/repo --pr 42 --no-conversation
+pr-agent reviews --repo owner/repo --pr 42
 ```
 
-### `list` — raw review threads and conversation comments
+### `review` — detail (singular)
+
+Loads **one** review or orphan by `--id` with full body, nested items, comments, and diff hunks.
 
 ```bash
-pr-agent list --repo owner/repo --pr 42
-pr-agent list --repo owner/repo --pr 42 --unresolved
-pr-agent list --repo owner/repo --pr 42 --inline-only
+pr-agent review --repo owner/repo --pr 42 --id PRR_123
+pr-agent review --repo owner/repo --pr 42 --id IC_999
 ```
 
-### `status` — thread counts
+Then fix locally, reply with `items[].reply_comment_id`, and resolve with `items[].thread_id` (`PRRT_` only).
+
+### `info` — PR title and description
 
 ```bash
-pr-agent status --repo owner/repo --pr 42
+pr-agent info --repo owner/repo --pr 42
 ```
+
+Returns title, body (description), state, draft/merged, author, URL, and base/head refs.
 
 ### `reply` — reply to a comment
 
@@ -128,7 +153,7 @@ pr-agent reply --repo owner/repo --pr 42 --comment-id 789 --kind issue_comment -
 pr-agent reply --repo owner/repo --pr 42 --comment-id 456 --kind review_body --body "Thanks, fixed"
 ```
 
-Use the numeric `comment_id` from `context` or `list` output. For inline threads, replies are threaded. For conversation/review-body comments, a new PR comment is posted.
+Use `reply_comment_id` from `review` output. For inline threads, replies are threaded. For conversation/review-body comments, a new PR comment is posted.
 
 ### `resolve` — resolve an inline review thread
 
@@ -136,7 +161,7 @@ Use the numeric `comment_id` from `context` or `list` output. For inline threads
 pr-agent resolve --thread-id PRRT_abc123
 ```
 
-Only applies to **inline_review** threads (`thread_id` starting with `PRRT_`). Idempotent — resolving an already-resolved thread succeeds.
+Only applies to **inline** threads (`thread_id` starting with `PRRT_`). The CLI rejects `PRR_` / `IC_` before calling GitHub. Idempotent.
 
 ### `unresolve` — unresolve an inline review thread
 
@@ -154,7 +179,7 @@ Expose pr-agent to MCP-aware clients (Cursor, Claude Code) as native tools inste
 pr-agent mcp
 ```
 
-Tools exposed: `get_agent_guide`, `get_pr_context`, `list_pr_threads`, `pr_status`, `reply_to_comment`, `resolve_thread`, `unresolve_thread`, `auth_status`.
+Tools: `get_agent_guide`, `get_pr_info`, `list_reviews`, `get_review`, `reply_to_comment`, `resolve_thread`, `unresolve_thread`, `auth_status`.
 
 Call `get_agent_guide` first if unsure how the workflow works.
 
@@ -173,9 +198,9 @@ Add to your MCP client config (e.g. `~/.cursor/mcp.json`):
 
 Authentication uses the same resolution as the CLI, so run `pr-agent auth login` once first. Then, in your MCP client, you can ask things like:
 
-> Use pr-agent to fetch unresolved review comments on owner/repo PR 42, fix them, then reply and resolve.
+> Use pr-agent to list reviews on owner/repo PR 42, load the ones with unresolved items, fix them, then reply and resolve.
 
-The agent calls `get_pr_context`, edits files, then `reply_to_comment` and `resolve_thread` — no manual JSON copying.
+The agent calls `list_reviews` → `get_review`, edits files, then `reply_to_comment` and `resolve_thread` — no manual JSON copying.
 
 ## Exit codes
 
@@ -188,71 +213,28 @@ The agent calls `get_pr_context`, edits files, then `reply_to_comment` and `reso
 ## Agent workflow
 
 ```bash
-# 1. Get unresolved review items
-pr-agent context --repo myorg/myrepo --pr 42 > review.json
+# 1. Optional: PR title/description
+pr-agent info --repo myorg/myrepo --pr 42
 
-# 2. Agent reads review.json, fixes code locally, commits
+# 2. Index reviews + orphans
+pr-agent reviews --repo myorg/myrepo --pr 42
 
-# 3. Reply and resolve each addressed thread
+# 3. Load one review with full items
+pr-agent review --repo myorg/myrepo --pr 42 --id PRR_123
+
+# 4. Fix locally, then reply and resolve each item
 pr-agent reply --repo myorg/myrepo --pr 42 --comment-id 123 --body "Fixed in commit abc123"
 pr-agent resolve --thread-id PRRT_kwDO...
 ```
 
-## Example `context` output
-
-```json
-{
-  "repo": "owner/repo",
-  "pr": 42,
-  "items": [
-    {
-      "thread_id": "PRRT_kwDO...",
-      "kind": "inline_review",
-      "file": "internal/foo.go",
-      "line": 42,
-      "side": "RIGHT",
-      "is_resolved": false,
-      "is_outdated": false,
-      "body": "Consider handling the error here.",
-      "author": "coderabbit[bot]",
-      "comment_id": "1234567890",
-      "diff_hunk": "@@ -40,7 +40,7 @@ func foo() {",
-      "comments": [
-        {
-          "id": "1234567890",
-          "body": "Consider handling the error here.",
-          "author": "coderabbit[bot]",
-          "created_at": "2026-07-20T08:00:00Z",
-          "diff_hunk": "@@ -40,7 +40,7 @@ func foo() {"
-        },
-        {
-          "id": "1234567900",
-          "body": "Still needs a nil check.",
-          "author": "coderabbit[bot]",
-          "created_at": "2026-07-20T09:00:00Z"
-        }
-      ]
-    }
-  ],
-  "summary": {
-    "total": 5,
-    "unresolved": 2,
-    "resolved": 3,
-    "outdated": 0,
-    "inline": 3,
-    "issue": 1,
-    "review_bodies": 1
-  }
-}
-```
-
 ## Design
 
-- **REST** (`go-github`): issue comments, review bodies, inline replies
-- **GraphQL**: list inline review threads with resolve state, paginated comment history, resolve threads
-- **MCP**: stdio JSON-RPC 2.0 server (stdlib only, no extra deps) wrapping the same operations
+- **REST** (`go-github`): issue comments, review list/bodies, inline replies, PR metadata
+- **GraphQL**: inline review threads (with parent review id), resolve/unresolve
+- **Review hierarchy**: `reviews` / `list_reviews` → `review` / `get_review` → reply → resolve
+- **MCP**: stdio JSON-RPC 2.0 server (stdlib only) wrapping the same operations
 - **stdout = JSON**, stderr = logs/errors
-- No webhooks — agents poll `context` when needed
+- No webhooks — agents poll `reviews` when needed
 
 ## License
 

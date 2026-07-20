@@ -83,6 +83,9 @@ type reviewCommentNode struct {
 	Author     *struct {
 		Login string `json:"login"`
 	} `json:"author"`
+	PullRequestReview *struct {
+		DatabaseID int64 `json:"databaseId"`
+	} `json:"pullRequestReview"`
 }
 
 type threadCommentsQuery struct {
@@ -123,6 +126,7 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
               diffHunk
               createdAt
               author { login }
+              pullRequestReview { databaseId }
             }
           }
         }
@@ -185,6 +189,7 @@ query($threadId: ID!, $cursor: String) {
           diffHunk
           createdAt
           author { login }
+          pullRequestReview { databaseId }
         }
       }
     }
@@ -277,6 +282,9 @@ func mapInlineThreads(nodes []reviewThreadNode) []models.Thread {
 		if n.StartLine != nil {
 			thread.StartLine = *n.StartLine
 		}
+		if reviewID := parentReviewID(n.Comments.Nodes); reviewID != "" {
+			thread.ReviewID = reviewID
+		}
 
 		for _, c := range n.Comments.Nodes {
 			thread.Comments = append(thread.Comments, mapReviewComment(c))
@@ -284,6 +292,21 @@ func mapInlineThreads(nodes []reviewThreadNode) []models.Thread {
 		out = append(out, thread)
 	}
 	return out
+}
+
+// parentReviewID returns PRR_<databaseId> from the first comment that has a parent review.
+func parentReviewID(comments []reviewCommentNode) string {
+	for _, c := range comments {
+		if c.PullRequestReview != nil && c.PullRequestReview.DatabaseID != 0 {
+			return ReviewIDFromDatabaseID(c.PullRequestReview.DatabaseID)
+		}
+	}
+	return ""
+}
+
+// ReviewIDFromDatabaseID builds the synthetic review id used across the API.
+func ReviewIDFromDatabaseID(id int64) string {
+	return fmt.Sprintf("PRR_%d", id)
 }
 
 func mapReviewComment(c reviewCommentNode) models.Comment {

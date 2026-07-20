@@ -17,7 +17,7 @@ import (
 )
 
 // Version is the reported server version (visible in Cursor MCP server info).
-const Version = "0.2.0"
+const Version = "0.4.0"
 
 // defaultProtocolVersion is used if the client does not send one.
 const defaultProtocolVersion = "2025-06-18"

@@ -7,84 +7,91 @@ import "github.com/hero/pr-agent/internal/guide"
 
 const rootLong = guide.AgentGuide
 
-const contextLong = `Build an agent-ready fix queue for a pull request.
+const reviewsLong = `List all reviews on a PR (index) — not the full comment details.
+
+WHAT THIS IS
+  "reviews" (plural) = the INDEX for the whole pull request.
+  Use it to see which reviews exist, how many unresolved items each has, and
+  which orphans (e.g. Dependency Security Scan) are on the conversation.
+
+  For the full body + every line comment under one review, use:
+    pr-agent review --repo OWNER/REPO --pr N --id PRR_...
 
 WHEN TO USE
-  Start here. This is the main command agents should call to understand what
-  needs fixing on a PR. Prefer context over list when you need file/line/diff
-  context in a flat item array.
+  First step after (optional) "info". Humans and agents both start here to
+  decide what to open next. Empty reply-only PullRequestReview shells are omitted.
 
 OUTPUT (JSON on stdout)
   {
-    "repo": "owner/repo",
-    "pr": 42,
-    "items": [{
-      "thread_id": "PRRT_...",
-      "kind": "inline_review",
-      "file": "path/to/file.go",
-      "line": 42,
-      "body": "latest comment text",
-      "author": "bot-name",
-      "comment_id": "1234567890",
-      "diff_hunk": "@@ ...",
-      "is_resolved": false,
-      "is_outdated": false,
-      "comments": [
-        {"id": "...", "body": "...", "author": "...", "created_at": "..."}
-      ]
+    "repo": "owner/repo", "pr": 42,
+    "summary": {"reviews": 2, "orphans": 1, "items_unresolved": 3, ...},
+    "reviews": [{
+      "review_id": "PRR_123", "author": "jasper", "state": "CHANGES_REQUESTED",
+      "preview": "...", "items_total": 4, "items_unresolved": 2, "items_resolved": 2,
+      "can_resolve": false
     }],
-    "summary": {"total": 3, "unresolved": 1, "inline": 2, "issue": 1, ...}
-  }
-
-FLAGS
-  --unresolved (default true)   Skip resolved inline threads; conversation comments always included
-  --inline-only                 Only inline review threads (skip issue/review_body)
-  --no-conversation             Exclude issue_comment and review_body
-  --include-issue               Include PR conversation comments (default true)
-  --include-review-body         Include review summary bodies (default true)
-
-NOTES FOR AGENTS
-  - Process every item where is_resolved is false.
-  - Read comments[] for full back-and-forth, not just body.
-  - is_outdated true means the line moved; read body and file anyway.
-  - Use comment_id from the item for reply; thread_id for resolve.`
-
-const listLong = `List all review threads and conversation comments for a PR.
-
-WHEN TO USE
-  When you need the raw thread structure with nested comments[] per thread.
-  Use context instead if you want a flat fix-queue optimized for agents.
-
-OUTPUT (JSON on stdout)
-  {
-    "repo": "owner/repo",
-    "pr": 42,
-    "threads": [{
-      "thread_id": "PRRT_...",
-      "kind": "inline_review",
-      "file": "...", "line": 42,
-      "is_resolved": false, "is_outdated": false,
-      "comments": [{"id": "...", "body": "...", "author": "...", "created_at": "..."}]
+    "orphans": [{
+      "id": "IC_999", "kind": "issue_comment", "preview": "Dependency Security Scan…",
+      "can_resolve": false
     }]
   }
 
-FLAGS
-  Same fetch flags as context. Default --unresolved is false (returns all threads).`
+NEXT STEP
+  pr-agent review --repo OWNER/REPO --pr N --id <review_id or orphan id>
+  MCP equivalent: list_reviews → get_review`
 
-const statusLong = `Return aggregate comment counts for a PR without full payloads.
+const reviewLong = `Load ONE review or orphan in full — summary + all nested items.
+
+WHAT THIS IS
+  "review" (singular) = DETAIL for a single id from "reviews".
+  Returns the review summary body and every nested inline item with comments,
+  diff hunks, file/line, reply_comment_id, and thread_id.
+
+  To list all reviews on the PR first, use:
+    pr-agent reviews --repo OWNER/REPO --pr N
 
 WHEN TO USE
-  Quick check after fixing/replying. Verify unresolved count reached zero.
-  Cheaper than context when you only need counts.
+  After "reviews", when you have chosen a review_id (PRR_...) or orphan id
+  (IC_... / PRRT_...) and need everything required to fix and reply.
+
+ID PREFIXES
+  PRR_    Submitted review — body + items[] (each item can_resolve=true)
+  IC_     Orphan issue comment — body only, items=[], can_resolve=false
+  PRRT_   Single inline thread — items[0] with full chain; resolve the item
 
 OUTPUT (JSON on stdout)
   {
-    "repo": "owner/repo",
-    "pr": 42,
-    "summary": {
-      "total": 5, "unresolved": 2, "resolved": 3, "outdated": 0,
-      "inline": 3, "issue": 1, "review_bodies": 1
-    }
+    "id": "PRR_123", "kind": "review_body", "body": "...", "can_resolve": false,
+    "reply": {"kind": "review_body", "comment_id": "123"},
+    "items": [{
+      "thread_id": "PRRT_...", "file": "src/foo.go", "line": 88,
+      "can_resolve": true, "reply_comment_id": "456",
+      "diff_hunk": "...", "comments": [...]
+    }]
+  }
+
+THEN (per unresolved item)
+  1. Fix code locally
+  2. pr-agent reply --repo ... --pr N --comment-id <reply_comment_id> --body "Fixed in SHA"
+  3. pr-agent resolve --thread-id <thread_id>
+  Server rejects resolve on PRR_ / IC_ ids.
+  MCP equivalent: get_review → reply_to_comment → resolve_thread`
+
+const infoLong = `Get a pull request's title, description (body), and basic metadata.
+
+WHEN TO USE
+  Optional first step for humans and agents — understand what the PR claims to do
+  before diving into reviews. Read-only; does not include review threads.
+
+  Review feedback: use "reviews" (index) then "review" (detail).
+
+OUTPUT (JSON on stdout)
+  {
+    "repo": "owner/repo", "pr": 42,
+    "title": "...", "body": "...",
+    "state": "open", "draft": false, "merged": false,
+    "author": "...", "url": "https://github.com/...",
+    "base_ref": "main", "head_ref": "feature-branch"
   }`
 
 const replyLong = `Post a reply on a PR after addressing feedback.
@@ -101,12 +108,12 @@ OUTPUT (JSON on stdout)
   {"comment_id": "9876543210", "body": "your reply", "url": "https://github.com/..."}
 
 FLAGS
-  --comment-id   Numeric database ID from context/list output (required)
+  --comment-id   Numeric database ID from review items / reply target (required)
   --body         Reply text (required)
   --kind         inline_review | issue_comment | review_body (default inline_review)
 
 NOTES FOR AGENTS
-  - Use the comment_id from the item you addressed (usually the latest in comments[]).
+  - Use reply_comment_id from the item you addressed (usually the latest in comments[]).
   - Mention the commit SHA in --body so reviewers can verify the fix.
   - For inline_review, --comment-id can be any comment in the thread.`
 
@@ -117,13 +124,13 @@ WHEN TO USE
 
 LIMITATIONS
   Only works for inline_review threads (thread_id starting with PRRT_).
-  issue_comment and review_body cannot be resolved via this command.
+  Server rejects PRR_ (review summaries) and IC_ (issue comments) before calling GitHub.
 
 OUTPUT (JSON on stdout)
   {"thread_id": "PRRT_...", "is_resolved": true}
 
 FLAGS
-  --thread-id   GraphQL thread ID from context/list (required, prefix PRRT_)`
+  --thread-id   GraphQL thread ID from review items (required, prefix PRRT_)`
 
 const unresolveLong = `Mark an inline review thread as unresolved on GitHub.
 
@@ -133,13 +140,13 @@ WHEN TO USE
 
 LIMITATIONS
   Only works for inline_review threads (thread_id starting with PRRT_).
-  issue_comment and review_body cannot be unresolved via this command.
+  Server rejects PRR_ and IC_ ids before calling GitHub.
 
 OUTPUT (JSON on stdout)
   {"thread_id": "PRRT_...", "is_resolved": false}
 
 FLAGS
-  --thread-id   GraphQL thread ID from context/list (required, prefix PRRT_)`
+  --thread-id   GraphQL thread ID from review items (required, prefix PRRT_)`
 
 const authLong = `Manage GitHub authentication for pr-agent.
 
@@ -192,12 +199,12 @@ WHEN TO USE
   over stdin/stdout and runs until the client disconnects.
 
 TOOLS EXPOSED
-  get_agent_guide    Full workflow guide — call first if unsure
-  get_pr_context     Fix queue: threads + comments + diff context (primary)
-  list_pr_threads    Raw threads with nested comments
-  pr_status          Aggregate comment counts
+  get_agent_guide    Full usage guide for humans and agents — call first if unsure
+  get_pr_info        PR title, description, and basic metadata
+  list_reviews       INDEX: reviews + orphans with counts (pick an id next)
+  get_review         DETAIL: one review or orphan by id (summary + all items)
   reply_to_comment   Post a reply after fixing
-  resolve_thread     Resolve an inline review thread (PRRT_ only)
+  resolve_thread     Resolve an inline review thread (PRRT_ only; server-verified)
   unresolve_thread   Re-open a resolved inline review thread (PRRT_ only)
   auth_status        Show authenticated GitHub user
 
