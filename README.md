@@ -10,6 +10,16 @@ Install to your `GOPATH/bin` (so `pr-agent` is on your PATH):
 go install ./cmd/pr-agent
 ```
 
+Or download a pre-built binary from [GitHub Releases](https://github.com/m-mohammadi1/pr-agent/releases):
+
+```bash
+# Linux amd64 example (replace VERSION, e.g. v0.1.0)
+VERSION=v0.1.0
+curl -LO "https://github.com/m-mohammadi1/pr-agent/releases/download/${VERSION}/pr-agent_${VERSION}_linux_amd64"
+chmod +x "pr-agent_${VERSION}_linux_amd64"
+sudo mv "pr-agent_${VERSION}_linux_amd64" /usr/local/bin/pr-agent
+```
+
 Or build a local binary:
 
 ```bash
@@ -207,3 +217,14 @@ pr-agent resolve --thread-id PRRT_kwDO...
 ## License
 
 MIT
+
+## Releasing
+
+Push a version tag to trigger the release workflow:
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+GitHub Actions builds binaries for linux/darwin/windows (amd64 + arm64) and publishes them to the Releases page.
