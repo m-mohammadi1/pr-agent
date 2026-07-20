@@ -8,6 +8,7 @@ type CommentKind string
 const (
 	KindInlineReview CommentKind = "inline_review"
 	KindIssueComment CommentKind = "issue_comment"
+	KindReviewBody   CommentKind = "review_body"
 )
 
 // Thread represents a normalized review thread or top-level PR comment.
@@ -57,18 +58,24 @@ type ContextItem struct {
 	Side       string      `json:"side,omitempty"`
 	IsResolved bool        `json:"is_resolved"`
 	IsOutdated bool        `json:"is_outdated"`
-	Body       string      `json:"body"`
-	Author     string      `json:"author"`
-	CommentID  string      `json:"comment_id"`
-	DiffHunk   string      `json:"diff_hunk,omitempty"`
+	// Latest comment (convenience for agents).
+	Body      string `json:"body"`
+	Author    string `json:"author"`
+	CommentID string `json:"comment_id"`
+	DiffHunk  string `json:"diff_hunk,omitempty"`
+	// Full conversation in chronological order.
+	Comments []Comment `json:"comments"`
 }
 
 // StatusSummary holds aggregate PR review comment stats.
 type StatusSummary struct {
-	Total      int `json:"total"`
-	Unresolved int `json:"unresolved"`
-	Resolved   int `json:"resolved"`
-	Outdated   int `json:"outdated"`
+	Total        int `json:"total"`
+	Unresolved   int `json:"unresolved"`
+	Resolved     int `json:"resolved"`
+	Outdated     int `json:"outdated"`
+	Inline       int `json:"inline"`
+	Issue        int `json:"issue"`
+	ReviewBodies int `json:"review_bodies"`
 }
 
 // StatusResult is returned by the status command.

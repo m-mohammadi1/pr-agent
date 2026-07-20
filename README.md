@@ -67,40 +67,38 @@ Required scopes for a fine-grained PAT:
 
 All commands write JSON to stdout. Logs and errors go to stderr.
 
-### `auth` — initialize token
-
-Get a token from GitHub CLI (`gh auth token`) and write it into `.env`:
+### `auth` — one-time setup
 
 ```bash
-./bin/pr-agent auth from-gh --env-file .env --var TOKEN
+pr-agent auth login
+pr-agent auth status
+pr-agent auth logout
 ```
 
-Or provide one manually:
-
-```bash
-./bin/pr-agent auth manual --env-file .env --var TOKEN --token 'ghp_...'
-```
-
-Then in new terminals, source your env file once:
-
-```bash
-set -a; . ./.env; set +a
-```
+See [Auth](#auth) above for details.
 
 ### `context` — main agent entry point
 
-Returns an actionable fix queue with file paths, lines, comment bodies, and diff hunks.
+Returns an actionable fix queue with file paths, lines, comment bodies, diff hunks, and full conversation history per thread.
+
+Includes:
+- **inline_review** — line-level review threads (paginated, full reply chain)
+- **issue_comment** — top-level PR conversation comments
+- **review_body** — submitted review summary bodies
 
 ```bash
 pr-agent context --repo owner/repo --pr 42
 pr-agent context --repo owner/repo --pr 42 --unresolved=false
+pr-agent context --repo owner/repo --pr 42 --inline-only
+pr-agent context --repo owner/repo --pr 42 --no-conversation
 ```
 
-### `list` — raw review threads
+### `list` — raw review threads and conversation comments
 
 ```bash
 pr-agent list --repo owner/repo --pr 42
 pr-agent list --repo owner/repo --pr 42 --unresolved
+pr-agent list --repo owner/repo --pr 42 --inline-only
 ```
 
 ### `status` — thread counts
@@ -109,21 +107,26 @@ pr-agent list --repo owner/repo --pr 42 --unresolved
 pr-agent status --repo owner/repo --pr 42
 ```
 
-### `reply` — reply to an inline comment
+### `reply` — reply to a comment
 
 ```bash
+# Inline review thread (default)
 pr-agent reply --repo owner/repo --pr 42 --comment-id 123456 --body "Fixed in abc123"
+
+# PR conversation or review-body comment
+pr-agent reply --repo owner/repo --pr 42 --comment-id 789 --kind issue_comment --body "Addressed"
+pr-agent reply --repo owner/repo --pr 42 --comment-id 456 --kind review_body --body "Thanks, fixed"
 ```
 
-Use the numeric `comment_id` from `context` or `list` output (GitHub database ID).
+Use the numeric `comment_id` from `context` or `list` output. For inline threads, replies are threaded. For conversation/review-body comments, a new PR comment is posted.
 
-### `resolve` — resolve a review thread
+### `resolve` — resolve an inline review thread
 
 ```bash
 pr-agent resolve --thread-id PRRT_abc123
 ```
 
-Use the `thread_id` from `context` or `list` output. Idempotent — resolving an already-resolved thread succeeds.
+Only applies to **inline_review** threads (`thread_id` starting with `PRRT_`). Idempotent — resolving an already-resolved thread succeeds.
 
 ## Exit codes
 
@@ -164,22 +167,40 @@ pr-agent resolve --thread-id PRRT_kwDO...
       "body": "Consider handling the error here.",
       "author": "coderabbit[bot]",
       "comment_id": "1234567890",
-      "diff_hunk": "@@ -40,7 +40,7 @@ func foo() {"
+      "diff_hunk": "@@ -40,7 +40,7 @@ func foo() {",
+      "comments": [
+        {
+          "id": "1234567890",
+          "body": "Consider handling the error here.",
+          "author": "coderabbit[bot]",
+          "created_at": "2026-07-20T08:00:00Z",
+          "diff_hunk": "@@ -40,7 +40,7 @@ func foo() {"
+        },
+        {
+          "id": "1234567900",
+          "body": "Still needs a nil check.",
+          "author": "coderabbit[bot]",
+          "created_at": "2026-07-20T09:00:00Z"
+        }
+      ]
     }
   ],
   "summary": {
-    "total": 3,
-    "unresolved": 1,
-    "resolved": 2,
-    "outdated": 0
+    "total": 5,
+    "unresolved": 2,
+    "resolved": 3,
+    "outdated": 0,
+    "inline": 3,
+    "issue": 1,
+    "review_bodies": 1
   }
 }
 ```
 
 ## Design
 
-- **REST** (`go-github`): post comment replies
-- **GraphQL**: list review threads with resolve state, resolve threads
+- **REST** (`go-github`): issue comments, review bodies, inline replies
+- **GraphQL**: list inline review threads with resolve state, paginated comment history, resolve threads
 - **stdout = JSON**, stderr = logs/errors
 - No webhooks — agents poll `context` when needed
 

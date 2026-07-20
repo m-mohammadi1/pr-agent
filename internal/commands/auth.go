@@ -16,9 +16,13 @@ import (
 
 func newAuthCommand() *cobra.Command {
 	root := &cobra.Command{
-		Use:   "auth",
-		Short: "Authenticate pr-agent (one-time setup)",
-		Long:  "Store a GitHub token once in your user config so pr-agent works from any directory.",
+		Use:     "auth",
+		Short:   "Authenticate pr-agent (one-time setup)",
+		Long:    authLong,
+		Example: `  pr-agent auth login
+  pr-agent auth login --from-gh
+  pr-agent auth status
+  pr-agent auth logout`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLogin(cmd, loginOptions{})
 		},
@@ -40,8 +44,12 @@ func newAuthLoginCommand() *cobra.Command {
 	var opts loginOptions
 
 	cmd := &cobra.Command{
-		Use:   "login",
-		Short: "Authenticate and store your GitHub token",
+		Use:     "login",
+		Short:   "Authenticate and store your GitHub token",
+		Long:    authLoginLong,
+		Example: `  pr-agent auth login
+  pr-agent auth login --from-gh
+  pr-agent auth login --token ghp_xxx`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runLogin(cmd, opts)
 		},
@@ -146,6 +154,7 @@ func newAuthStatusCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
 		Short: "Show current authentication status",
+		Long:  authStatusLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			if ctx == nil {
@@ -180,6 +189,7 @@ func newAuthLogoutCommand() *cobra.Command {
 	return &cobra.Command{
 		Use:   "logout",
 		Short: "Remove the stored token",
+		Long:  authLogoutLong,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path, existed, err := config.Delete()
 			if err != nil {

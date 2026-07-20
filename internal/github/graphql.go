@@ -57,16 +57,20 @@ type reviewThreadsQuery struct {
 }
 
 type reviewThreadNode struct {
-	ID         string `json:"id"`
-	IsResolved bool   `json:"isResolved"`
-	IsOutdated bool   `json:"isOutdated"`
-	Path       string `json:"path"`
-	Line       *int   `json:"line"`
-	StartLine  *int   `json:"startLine"`
-	OriginalLine *int `json:"originalLine"`
-	DiffSide   string `json:"diffSide"`
-	Comments   struct {
-		Nodes []reviewCommentNode `json:"nodes"`
+	ID           string `json:"id"`
+	IsResolved   bool   `json:"isResolved"`
+	IsOutdated   bool   `json:"isOutdated"`
+	Path         string `json:"path"`
+	Line         *int   `json:"line"`
+	StartLine    *int   `json:"startLine"`
+	OriginalLine *int   `json:"originalLine"`
+	DiffSide     string `json:"diffSide"`
+	Comments     struct {
+		Nodes    []reviewCommentNode `json:"nodes"`
+		PageInfo struct {
+			HasNextPage bool   `json:"hasNextPage"`
+			EndCursor   string `json:"endCursor"`
+		} `json:"pageInfo"`
 	} `json:"comments"`
 }
 
@@ -81,7 +85,19 @@ type reviewCommentNode struct {
 	} `json:"author"`
 }
 
-// FetchReviewThreads returns all review threads for a PR.
+type threadCommentsQuery struct {
+	Node struct {
+		Comments struct {
+			Nodes    []reviewCommentNode `json:"nodes"`
+			PageInfo struct {
+				HasNextPage bool   `json:"hasNextPage"`
+				EndCursor   string `json:"endCursor"`
+			} `json:"pageInfo"`
+		} `json:"comments"`
+	} `json:"node"`
+}
+
+// FetchReviewThreads returns all inline review threads for a PR with full comment history.
 func (g *GraphQL) FetchReviewThreads(ctx context.Context, owner, repo string, pr int) ([]models.Thread, error) {
 	const query = `
 query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
@@ -99,6 +115,7 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
           originalLine
           diffSide
           comments(first: 50) {
+            pageInfo { hasNextPage endCursor }
             nodes {
               id
               databaseId
@@ -133,6 +150,16 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
 		}
 
 		threads := data.Repository.PullRequest.ReviewThreads
+		for i := range threads.Nodes {
+			node := &threads.Nodes[i]
+			if node.Comments.PageInfo.HasNextPage {
+				more, err := g.fetchThreadComments(ctx, node.ID, node.Comments.PageInfo.EndCursor)
+				if err != nil {
+					return nil, err
+				}
+				node.Comments.Nodes = append(node.Comments.Nodes, more...)
+			}
+		}
 		all = append(all, threads.Nodes...)
 
 		if !threads.PageInfo.HasNextPage {
@@ -141,7 +168,50 @@ query($owner: String!, $repo: String!, $pr: Int!, $cursor: String) {
 		cursor = threads.PageInfo.EndCursor
 	}
 
-	return mapThreads(all), nil
+	return mapInlineThreads(all), nil
+}
+
+func (g *GraphQL) fetchThreadComments(ctx context.Context, threadID, cursor string) ([]reviewCommentNode, error) {
+	const query = `
+query($threadId: ID!, $cursor: String) {
+  node(id: $threadId) {
+    ... on PullRequestReviewThread {
+      comments(first: 50, after: $cursor) {
+        pageInfo { hasNextPage endCursor }
+        nodes {
+          id
+          databaseId
+          body
+          diffHunk
+          createdAt
+          author { login }
+        }
+      }
+    }
+  }
+}`
+
+	var all []reviewCommentNode
+	for {
+		vars := map[string]any{"threadId": threadID}
+		if cursor != "" {
+			vars["cursor"] = cursor
+		}
+
+		var data threadCommentsQuery
+		if err := g.do(ctx, query, vars, &data); err != nil {
+			return nil, err
+		}
+
+		comments := data.Node.Comments
+		all = append(all, comments.Nodes...)
+
+		if !comments.PageInfo.HasNextPage {
+			break
+		}
+		cursor = comments.PageInfo.EndCursor
+	}
+	return all, nil
 }
 
 // ResolveThread marks a review thread as resolved. Idempotent.
@@ -167,7 +237,7 @@ mutation($threadId: ID!) {
 	return nil
 }
 
-func mapThreads(nodes []reviewThreadNode) []models.Thread {
+func mapInlineThreads(nodes []reviewThreadNode) []models.Thread {
 	out := make([]models.Thread, 0, len(nodes))
 	for _, n := range nodes {
 		thread := models.Thread{
@@ -186,22 +256,26 @@ func mapThreads(nodes []reviewThreadNode) []models.Thread {
 		}
 
 		for _, c := range n.Comments.Nodes {
-			author := ""
-			if c.Author != nil {
-				author = c.Author.Login
-			}
-			createdAt, _ := time.Parse(time.RFC3339, c.CreatedAt)
-			thread.Comments = append(thread.Comments, models.Comment{
-				ID:        fmt.Sprintf("%d", c.DatabaseID),
-				Body:      c.Body,
-				Author:    author,
-				CreatedAt: createdAt,
-				DiffHunk:  c.DiffHunk,
-			})
+			thread.Comments = append(thread.Comments, mapReviewComment(c))
 		}
 		out = append(out, thread)
 	}
 	return out
+}
+
+func mapReviewComment(c reviewCommentNode) models.Comment {
+	author := ""
+	if c.Author != nil {
+		author = c.Author.Login
+	}
+	createdAt, _ := time.Parse(time.RFC3339, c.CreatedAt)
+	return models.Comment{
+		ID:        fmt.Sprintf("%d", c.DatabaseID),
+		Body:      c.Body,
+		Author:    author,
+		CreatedAt: createdAt,
+		DiffHunk:  c.DiffHunk,
+	}
 }
 
 func (g *GraphQL) do(ctx context.Context, query string, variables map[string]any, dest any) error {
@@ -215,7 +289,6 @@ func (g *GraphQL) do(ctx context.Context, query string, variables map[string]any
 		return fmt.Errorf("graphql: %s", resp.Errors[0].Message)
 	}
 
-	// Re-marshal data into dest for typed unmarshaling.
 	raw, err := marshalJSON(resp.Data)
 	if err != nil {
 		return err

@@ -9,6 +9,7 @@ import (
 
 	gh "github.com/google/go-github/v69/github"
 	"github.com/hero/pr-agent/internal/config"
+	"github.com/hero/pr-agent/internal/models"
 )
 
 // Client wraps REST and GraphQL access to GitHub.
@@ -86,6 +87,39 @@ func (c *Client) CreateReply(ctx context.Context, owner, repo string, pr int, in
 		return nil, apiError("create reply", resp, err)
 	}
 	return created, nil
+}
+
+// Reply posts a reply based on comment kind. Inline replies are threaded;
+// issue and review-body comments get a new PR conversation comment.
+func (c *Client) Reply(ctx context.Context, owner, repo string, pr int, kind models.CommentKind, commentID int64, body string) (*models.ReplyResult, error) {
+	switch kind {
+	case models.KindIssueComment, models.KindReviewBody:
+		created, err := c.CreateIssueComment(ctx, owner, repo, pr, body)
+		if err != nil {
+			return nil, err
+		}
+		result := &models.ReplyResult{
+			CommentID: fmt.Sprintf("%d", created.GetID()),
+			Body:      created.GetBody(),
+		}
+		if created.HTMLURL != nil {
+			result.URL = *created.HTMLURL
+		}
+		return result, nil
+	default:
+		created, err := c.CreateReply(ctx, owner, repo, pr, commentID, body)
+		if err != nil {
+			return nil, err
+		}
+		result := &models.ReplyResult{
+			CommentID: fmt.Sprintf("%d", created.GetID()),
+			Body:      created.GetBody(),
+		}
+		if created.HTMLURL != nil {
+			result.URL = *created.HTMLURL
+		}
+		return result, nil
+	}
 }
 
 // ParseCommentID converts a numeric comment ID string to int64.
