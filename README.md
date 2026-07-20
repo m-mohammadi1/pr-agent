@@ -138,6 +138,45 @@ pr-agent resolve --thread-id PRRT_abc123
 
 Only applies to **inline_review** threads (`thread_id` starting with `PRRT_`). Idempotent — resolving an already-resolved thread succeeds.
 
+### `unresolve` — unresolve an inline review thread
+
+```bash
+pr-agent unresolve --thread-id PRRT_abc123
+```
+
+Re-opens a resolved inline thread. Idempotent — unresolving an already-unresolved thread succeeds.
+
+### `mcp` — run as an MCP server
+
+Expose pr-agent to MCP-aware clients (Cursor, Claude Code) as native tools instead of shell commands. It speaks JSON-RPC 2.0 over stdio.
+
+```bash
+pr-agent mcp
+```
+
+Tools exposed: `get_agent_guide`, `get_pr_context`, `list_pr_threads`, `pr_status`, `reply_to_comment`, `resolve_thread`, `unresolve_thread`, `auth_status`.
+
+Call `get_agent_guide` first if unsure how the workflow works.
+
+Add to your MCP client config (e.g. `~/.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "pr-agent": {
+      "command": "pr-agent",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+Authentication uses the same resolution as the CLI, so run `pr-agent auth login` once first. Then, in your MCP client, you can ask things like:
+
+> Use pr-agent to fetch unresolved review comments on owner/repo PR 42, fix them, then reply and resolve.
+
+The agent calls `get_pr_context`, edits files, then `reply_to_comment` and `resolve_thread` — no manual JSON copying.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -211,6 +250,7 @@ pr-agent resolve --thread-id PRRT_kwDO...
 
 - **REST** (`go-github`): issue comments, review bodies, inline replies
 - **GraphQL**: list inline review threads with resolve state, paginated comment history, resolve threads
+- **MCP**: stdio JSON-RPC 2.0 server (stdlib only, no extra deps) wrapping the same operations
 - **stdout = JSON**, stderr = logs/errors
 - No webhooks — agents poll `context` when needed
 

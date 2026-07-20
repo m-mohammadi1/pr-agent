@@ -1,65 +1,11 @@
 package commands
 
+import "github.com/hero/pr-agent/internal/guide"
+
 // Agent-oriented help text for pr-agent commands.
 // Written for AI agents that invoke this CLI as a shell tool.
 
-const rootLong = `pr-agent — GitHub PR review bridge for AI agents
-
-PURPOSE
-  Fetch PR review feedback from GitHub (inline threads, conversation comments,
-  review bodies), fix code locally, then reply and resolve threads on GitHub.
-  All successful command output is JSON on stdout. Errors go to stderr.
-
-AUTH (run once before other commands)
-  pr-agent auth login          Interactive one-time setup; stores token globally
-  pr-agent auth status         Verify authentication
-  pr-agent auth logout         Remove stored token
-
-  Token resolution: GITHUB_TOKEN → GH_TOKEN → TOKEN → ~/.config/pr-agent/config.json
-
-AGENT WORKFLOW
-  1. pr-agent context --repo OWNER/REPO --pr N > review.json
-     Read review.json. Each item in "items" is one actionable thread.
-     Use "file", "line", "body", "comments" (full chain), "diff_hunk" to fix code.
-
-  2. Fix code locally and commit (pr-agent does not commit or push).
-
-  3. For each addressed item:
-     pr-agent reply --repo OWNER/REPO --pr N --comment-id ID --body "Fixed in SHA"
-     pr-agent resolve --thread-id THREAD_ID    (inline_review only)
-
-  4. pr-agent status --repo OWNER/REPO --pr N   Verify unresolved count is 0
-
-COMMENT KINDS (field "kind" in JSON output)
-  inline_review   Line-level review thread. thread_id prefix: PRRT_
-                  Reply: threaded. Resolve: yes (--thread-id).
-  issue_comment   Top-level PR conversation comment. thread_id prefix: IC_
-                  Reply: new PR comment (--kind issue_comment). Resolve: no.
-  review_body     Submitted review summary. thread_id prefix: PRR_
-                  Reply: new PR comment (--kind review_body). Resolve: no.
-
-KEY FIELDS IN context OUTPUT
-  items[].thread_id     GraphQL or synthetic ID; use with resolve (inline only)
-  items[].comment_id    Latest comment database ID; use with reply
-  items[].comments[]    Full conversation chronologically (multi-level replies)
-  items[].body          Latest comment text (convenience; same as last comments[])
-  items[].file,line     File location for inline_review
-  items[].is_outdated   true if diff line moved; still worth addressing
-  items[].is_resolved   true if thread already resolved (inline only)
-  summary               Counts: total, unresolved, resolved, outdated, inline, issue, review_bodies
-
-EXIT CODES
-  0  Success — parse stdout as JSON
-  1  Usage or auth error — read stderr; run pr-agent auth login if needed
-  2  GitHub API error — token may lack repo access or rate-limited
-
-COMMANDS
-  context   Primary entry: agent fix-queue with full comment history
-  list      Raw thread data (same sources as context, different shape)
-  status    Quick counts without full item payloads
-  reply     Post a reply after fixing
-  resolve   Mark inline review thread resolved
-  auth      One-time GitHub authentication`
+const rootLong = guide.AgentGuide
 
 const contextLong = `Build an agent-ready fix queue for a pull request.
 
@@ -179,6 +125,22 @@ OUTPUT (JSON on stdout)
 FLAGS
   --thread-id   GraphQL thread ID from context/list (required, prefix PRRT_)`
 
+const unresolveLong = `Mark an inline review thread as unresolved on GitHub.
+
+WHEN TO USE
+  Re-open a thread that was resolved by mistake, or when further work is needed
+  after a premature resolve. Idempotent.
+
+LIMITATIONS
+  Only works for inline_review threads (thread_id starting with PRRT_).
+  issue_comment and review_body cannot be unresolved via this command.
+
+OUTPUT (JSON on stdout)
+  {"thread_id": "PRRT_...", "is_resolved": false}
+
+FLAGS
+  --thread-id   GraphQL thread ID from context/list (required, prefix PRRT_)`
+
 const authLong = `Manage GitHub authentication for pr-agent.
 
 WHEN TO USE
@@ -221,3 +183,33 @@ Exit 1 if not authenticated.`
 const authLogoutLong = `Remove the stored token from ~/.config/pr-agent/config.json.
 
 Does not affect GITHUB_TOKEN/GH_TOKEN/TOKEN env vars if set.`
+
+const mcpLong = `Run pr-agent as an MCP (Model Context Protocol) stdio server.
+
+WHEN TO USE
+  Lets MCP-aware clients (Cursor, Claude Code) call pr-agent's capabilities
+  as native, typed tools instead of shell commands. The process speaks JSON-RPC
+  over stdin/stdout and runs until the client disconnects.
+
+TOOLS EXPOSED
+  get_agent_guide    Full workflow guide — call first if unsure
+  get_pr_context     Fix queue: threads + comments + diff context (primary)
+  list_pr_threads    Raw threads with nested comments
+  pr_status          Aggregate comment counts
+  reply_to_comment   Post a reply after fixing
+  resolve_thread     Resolve an inline review thread (PRRT_ only)
+  unresolve_thread   Re-open a resolved inline review thread (PRRT_ only)
+  auth_status        Show authenticated GitHub user
+
+AUTH
+  Uses the same token resolution as the CLI: GITHUB_TOKEN, GH_TOKEN, TOKEN,
+  then the stored config. Run "pr-agent auth login" once first.
+
+CLIENT CONFIG (example ~/.cursor/mcp.json)
+  {
+    "mcpServers": {
+      "pr-agent": { "command": "pr-agent", "args": ["mcp"] }
+    }
+  }
+
+Do not print to stdout in this mode; stdout is reserved for the MCP protocol.`

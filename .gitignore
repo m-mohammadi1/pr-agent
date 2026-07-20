@@ -8,3 +8,7 @@ go.work.sum
 # Local secrets
 .env
 .env.*
+
+# Local MCP testing (configure in ~/.cursor/mcp.json instead)
+.cursor/
+scripts/run-mcp.sh

@@ -237,6 +237,29 @@ mutation($threadId: ID!) {
 	return nil
 }
 
+// UnresolveThread marks a review thread as unresolved. Idempotent.
+func (g *GraphQL) UnresolveThread(ctx context.Context, threadID string) error {
+	const mutation = `
+mutation($threadId: ID!) {
+  unresolveReviewThread(input: {threadId: $threadId}) {
+    thread { isResolved }
+  }
+}`
+
+	var data struct {
+		UnresolveReviewThread struct {
+			Thread struct {
+				IsResolved bool `json:"isResolved"`
+			} `json:"thread"`
+		} `json:"unresolveReviewThread"`
+	}
+
+	if err := g.do(ctx, mutation, map[string]any{"threadId": threadID}, &data); err != nil {
+		return err
+	}
+	return nil
+}
+
 func mapInlineThreads(nodes []reviewThreadNode) []models.Thread {
 	out := make([]models.Thread, 0, len(nodes))
 	for _, n := range nodes {

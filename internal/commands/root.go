@@ -79,6 +79,7 @@ func NewRootCommand() *cobra.Command {
   # After fixing locally
   pr-agent reply --repo owner/repo --pr 42 --comment-id 123456 --body "Fixed in abc123"
   pr-agent resolve --thread-id PRRT_kwDO...
+  pr-agent unresolve --thread-id PRRT_kwDO...
 
   # Verify
   pr-agent status --repo owner/repo --pr 42`,
@@ -90,8 +91,10 @@ func NewRootCommand() *cobra.Command {
 	root.AddCommand(newContextCommand())
 	root.AddCommand(newReplyCommand())
 	root.AddCommand(newResolveCommand())
+	root.AddCommand(newUnresolveCommand())
 	root.AddCommand(newStatusCommand())
 	root.AddCommand(newAuthCommand())
+	root.AddCommand(newMCPCommand())
 
 	return root
 }
@@ -338,6 +341,41 @@ func newResolveCommand() *cobra.Command {
 			return output.WriteJSON(models.ResolveResult{
 				ThreadID:   threadID,
 				IsResolved: true,
+			})
+		},
+	}
+
+	cmd.Flags().StringVar(&threadID, "thread-id", "", "GraphQL thread id (required)")
+	_ = cmd.MarkFlagRequired("thread-id")
+	return cmd
+}
+
+func newUnresolveCommand() *cobra.Command {
+	var threadID string
+
+	cmd := &cobra.Command{
+		Use:     "unresolve",
+		Short:   "Unresolve an inline review thread",
+		Long:    unresolveLong,
+		Example: `  pr-agent unresolve --thread-id PRRT_kwDOIy9Ugs6SLd_L`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
+			client, err := newClient(ctx)
+			if err != nil {
+				return err
+			}
+
+			if threadID == "" {
+				return usageError{usage: true, err: fmt.Errorf("--thread-id is required")}
+			}
+
+			if err := client.GraphQL().UnresolveThread(ctx, threadID); err != nil {
+				return wrapAPI(fmt.Errorf("unresolve thread: %w", err))
+			}
+
+			return output.WriteJSON(models.ResolveResult{
+				ThreadID:   threadID,
+				IsResolved: false,
 			})
 		},
 	}
