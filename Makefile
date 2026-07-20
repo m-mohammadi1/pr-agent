@@ -7,7 +7,7 @@ help:
 	@echo "Targets: build, test, tidy"
 
 build:
-	docker run --rm -v "$(CURDIR)":/app -w /app $(GO_IMAGE) go build -buildvcs=false -o $(BINARY) ./cmd/pr-agent
+	docker run --rm -v "$(CURDIR)":/app -w /app $(GO_IMAGE) go build -buildvcs=false -o $(BINARY) .
 
 test:
 	docker run --rm -v "$(CURDIR)":/app -w /app $(GO_IMAGE) go test ./...

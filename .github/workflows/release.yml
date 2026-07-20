@@ -42,7 +42,7 @@ jobs:
           if [ "$GOOS" = "windows" ]; then ext=".exe"; fi
           out="pr-agent_${VERSION}_${GOOS}_${GOARCH}${ext}"
           mkdir -p dist
-          go build -buildvcs=false -ldflags="-s -w" -o "dist/${out}" ./cmd/pr-agent
+          go build -buildvcs=false -ldflags="-s -w" -o "dist/${out}" .
           cd dist && sha256sum "${out}" > "${out}.sha256"
 
       - name: Upload artifact

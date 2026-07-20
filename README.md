@@ -35,13 +35,13 @@ Agents via MCP use the same flow: `get_pr_info` → `list_reviews` → `get_revi
 Install to your `GOPATH/bin` (so `pr-agent` is on your PATH):
 
 ```bash
-go install github.com/m-mohammadi1/pr-agent/cmd/pr-agent@latest
+go install github.com/m-mohammadi1/pr-agent@latest
 ```
 
 From a local checkout:
 
 ```bash
-go install ./cmd/pr-agent
+go install .
 ```
 
 Or download a pre-built binary from [GitHub Releases](https://github.com/m-mohammadi1/pr-agent/releases):
@@ -57,7 +57,7 @@ sudo mv "pr-agent_${VERSION}_linux_amd64" /usr/local/bin/pr-agent
 Or build a local binary:
 
 ```bash
-go build -o bin/pr-agent ./cmd/pr-agent
+go build -o bin/pr-agent .
 # or, using the docker-based Makefile:
 make build
 ```
